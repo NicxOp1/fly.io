@@ -6,8 +6,6 @@ primary_region = "mia"
 
 [env]
   TOKEN = "aria-secret-token-2024"
-  TIMEOUT = "60000"
-  CONCURRENT = "5"
 
 [http_service]
   internal_port = 3000
@@ -16,11 +14,16 @@ primary_region = "mia"
   auto_start_machines = true
   min_machines_running = 0
 
-[http_service.checks]
-  grace_period = "30s"
+[http_service.concurrency]
+  type = "requests"
+  hard_limit = 5
+  soft_limit = 3
+
+[[http_service.checks]]
+  grace_period = "15s"
   interval = "30s"
   method = "GET"
-  timeout = "10s"
+  timeout = "5s"
   path = "/"
 
 [[vm]]
