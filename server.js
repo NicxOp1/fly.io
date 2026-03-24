@@ -49,6 +49,7 @@ async function getFeaturedListings(offset = 0, limit = 12) {
       graphqlData = await page.evaluate(async (vars) => {
         const res = await fetch('/api-gw/graphql', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query: `query Properties($companyId: String, $featuredListing: Boolean, $leaseProperty: Boolean, $statusIds: [String!], $hostname: String, $websiteId: ID, $limit: Int, $offset: Int, $sort: String, $sortDir: SortDirection) {
@@ -116,6 +117,7 @@ async function getAllFeatured() {
       while (true) {
         const res = await fetch('/api-gw/graphql', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query: `query Properties($companyId: String, $featuredListing: Boolean, $leaseProperty: Boolean, $statusIds: [String!], $hostname: String, $websiteId: ID, $limit: Int, $offset: Int, $sort: String, $sortDir: SortDirection) {
@@ -135,8 +137,18 @@ async function getAllFeatured() {
           })
         });
 
-        const json = await res.json();
-        if (!json.data || !json.data.properties) break;
+        const text = await res.text();
+        let json;
+        try { json = JSON.parse(text); } catch(e) {
+          return { properties: allProperties, totalCount, error: 'Parse error: ' + text.substring(0, 200) };
+        }
+
+        if (json.errors) {
+          return { properties: allProperties, totalCount, error: JSON.stringify(json.errors) };
+        }
+        if (!json.data || !json.data.properties) {
+          return { properties: allProperties, totalCount, error: 'No data in response', raw: text.substring(0, 500) };
+        }
 
         if (totalCount === null) {
           totalCount = json.data.propertiesCount?.count || 0;
