@@ -1,0 +1,21 @@
+app = "aria-browserless"
+primary_region = "mia"
+
+[build]
+  image = "ghcr.io/browserless/chromium:latest"
+
+[env]
+  TOKEN = "aria-secret-token-2024"
+  TIMEOUT = "60000"
+  CONCURRENT = "5"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
