@@ -32,13 +32,21 @@ async function getAllFeatured() {
       } catch (e) {}
     });
 
-    // Load first page
+    // Load first page (retry once on timeout)
     console.log('Loading page 1...');
-    await page.goto('https://soldbyaria.com/properties/sale', {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-    await new Promise(r => setTimeout(r, 2000));
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await page.goto('https://soldbyaria.com/properties/sale', {
+          waitUntil: 'networkidle2',
+          timeout: 90000
+        });
+        break;
+      } catch (e) {
+        if (attempt === 2) throw e;
+        console.log('Retry navigation...');
+      }
+    }
+    await new Promise(r => setTimeout(r, 3000));
 
     const allProperties = [...properties];
     console.log(`Page 1: ${allProperties.length} properties (total: ${totalCount})`);
@@ -68,7 +76,7 @@ async function getAllFeatured() {
 
         await page.goto(pageUrl, {
           waitUntil: 'networkidle2',
-          timeout: 60000
+          timeout: 90000
         });
         await new Promise(r => setTimeout(r, 2000));
 
