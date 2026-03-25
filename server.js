@@ -53,32 +53,37 @@ async function getAllFeatured() {
 
     // Paginate if there are more
     if (totalCount && allProperties.length < totalCount) {
-      // Find pagination links from the page
-      const pageLinks = await page.evaluate(() => {
-        const links = [];
-        document.querySelectorAll('a[href*="properties/sale"]').forEach(a => {
-          const href = a.getAttribute('href');
-          if (href && href.includes('=') && !links.includes(href)) {
-            links.push(href);
-          }
-        });
-        return links;
-      });
+      const totalPages = Math.ceil(totalCount / allProperties.length);
 
-      // Visit each pagination page
-      for (const link of pageLinks) {
+      for (let pageNum = 2; pageNum <= totalPages; pageNum++) {
         if (allProperties.length >= totalCount) break;
 
         properties = []; // Reset for next page capture
-        const pageUrl = link.startsWith('http') ? link : `https://soldbyaria.com${link}`;
-        const pageNum = link.match(/=(\d+)/)?.[1] || '?';
-        console.log(`Loading page ${pageNum}...`);
 
-        await page.goto(pageUrl, {
-          waitUntil: 'networkidle2',
-          timeout: 90000
-        });
-        await new Promise(r => setTimeout(r, 2000));
+        // Click the pagination link for this page number
+        const clicked = await page.evaluate((num) => {
+          const links = document.querySelectorAll('a');
+          for (const a of links) {
+            const href = a.getAttribute('href') || '';
+            const text = a.textContent.trim();
+            // Match by page number in text or href
+            if ((text === String(num)) || href.includes('=' + num)) {
+              a.click();
+              return true;
+            }
+          }
+          return false;
+        }, pageNum);
+
+        if (!clicked) {
+          console.log(`Page ${pageNum}: pagination link not found, stopping`);
+          break;
+        }
+
+        console.log(`Loading page ${pageNum}...`);
+        // Wait for navigation and GraphQL response
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 3000));
 
         // Add new properties (deduplicate by id)
         const existingIds = new Set(allProperties.map(p => p.id));
@@ -88,7 +93,7 @@ async function getAllFeatured() {
             existingIds.add(p.id);
           }
         }
-        console.log(`Page ${pageNum}: +${properties.length} properties (total collected: ${allProperties.length})`);
+        console.log(`Page ${pageNum}: +${properties.length} new (total: ${allProperties.length}/${totalCount})`);
       }
     }
 
