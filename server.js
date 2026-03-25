@@ -21,7 +21,7 @@ async function getAllFeatured() {
     let totalCount = null;
 
     let graphqlEndpoint = null;
-    let lastRequestPayload = null;
+    let listingsPayload = null; // The main listings query (has offset)
 
     page.on('request', (request) => {
       try {
@@ -29,8 +29,14 @@ async function getAllFeatured() {
           graphqlEndpoint = request.url();
           const postData = request.postData();
           if (postData) {
-            lastRequestPayload = JSON.parse(postData);
-            console.log('GraphQL request vars:', JSON.stringify(lastRequestPayload.variables || {}));
+            const parsed = JSON.parse(postData);
+            const vars = parsed.variables || {};
+            console.log('GraphQL request vars:', JSON.stringify(vars));
+            // Identify the main listings query by presence of 'offset' variable
+            if ('offset' in vars && 'limit' in vars) {
+              listingsPayload = parsed;
+              console.log('>>> Captured listings query payload');
+            }
           }
         }
       } catch (e) {}
@@ -41,9 +47,14 @@ async function getAllFeatured() {
         if (response.url().includes('/api-gw/graphql')) {
           const json = await response.json();
           if (json.data && json.data.properties) {
-            properties = json.data.properties;
-            totalCount = json.data.propertiesCount?.count || null;
-            console.log(`GraphQL response: ${properties.length} properties, total: ${totalCount}`);
+            const vars = json.data;
+            const count = json.data.propertiesCount?.count || null;
+            console.log(`GraphQL response: ${json.data.properties.length} properties, total: ${count}`);
+            // Only use the response from the main listings query (largest set)
+            if (json.data.properties.length > properties.length) {
+              properties = json.data.properties;
+              totalCount = count;
+            }
           }
         }
       } catch (e) {}
@@ -68,34 +79,21 @@ async function getAllFeatured() {
     const allProperties = [...properties];
     console.log(`Page 1: ${allProperties.length} properties (total: ${totalCount})`);
 
-    // Paginate using direct GraphQL calls if there are more
-    if (totalCount && allProperties.length < totalCount && graphqlEndpoint && lastRequestPayload) {
-      const perPage = allProperties.length;
-      const totalPages = Math.ceil(totalCount / perPage);
+    // Paginate using direct GraphQL calls with offset
+    if (totalCount && allProperties.length < totalCount && graphqlEndpoint && listingsPayload) {
+      const perPage = listingsPayload.variables.limit || allProperties.length;
       const existingIds = new Set(allProperties.map(p => p.id));
 
-      console.log(`Pagination: ${perPage}/page, ${totalPages} pages needed, endpoint: ${graphqlEndpoint}`);
+      console.log(`Pagination: ${perPage}/page, total: ${totalCount}, endpoint: ${graphqlEndpoint}`);
 
-      for (let pageNum = 2; pageNum <= totalPages + 1; pageNum++) {
+      for (let offset = perPage; offset < totalCount; offset += perPage) {
         if (allProperties.length >= totalCount) break;
 
-        // Clone the original payload and update the page/offset variable
-        const payload = JSON.parse(JSON.stringify(lastRequestPayload));
-        if (payload.variables) {
-          if ('page' in payload.variables) {
-            payload.variables.page = pageNum;
-          } else if ('offset' in payload.variables) {
-            payload.variables.offset = (pageNum - 1) * perPage;
-          } else if ('skip' in payload.variables) {
-            payload.variables.skip = (pageNum - 1) * perPage;
-          } else {
-            payload.variables.page = pageNum;
-          }
-        }
+        const payload = JSON.parse(JSON.stringify(listingsPayload));
+        payload.variables.offset = offset;
 
-        console.log(`GraphQL page ${pageNum}, vars: ${JSON.stringify(payload.variables)}`);
+        console.log(`GraphQL offset ${offset}, limit ${perPage}`);
 
-        // Fetch directly and return JSON from browser context
         const result = await page.evaluate(async (endpoint, body) => {
           const res = await fetch(endpoint, {
             method: 'POST',
@@ -107,7 +105,7 @@ async function getAllFeatured() {
         }, graphqlEndpoint, payload);
 
         const pageProps = result?.data?.properties || [];
-        console.log(`Page ${pageNum}: got ${pageProps.length} properties from GraphQL`);
+        console.log(`Offset ${offset}: got ${pageProps.length} properties from GraphQL`);
 
         let added = 0;
         for (const p of pageProps) {
@@ -117,7 +115,7 @@ async function getAllFeatured() {
             added++;
           }
         }
-        console.log(`Page ${pageNum}: added ${added} new (total: ${allProperties.length}/${totalCount})`);
+        console.log(`Offset ${offset}: added ${added} new (total: ${allProperties.length}/${totalCount})`);
 
         if (pageProps.length === 0) {
           console.log('No more results, stopping pagination');
