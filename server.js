@@ -20,6 +20,22 @@ async function getAllFeatured() {
     let properties = [];
     let totalCount = null;
 
+    let graphqlEndpoint = null;
+    let lastRequestPayload = null;
+
+    page.on('request', (request) => {
+      try {
+        if (request.url().includes('/api-gw/graphql') && request.method() === 'POST') {
+          graphqlEndpoint = request.url();
+          const postData = request.postData();
+          if (postData) {
+            lastRequestPayload = JSON.parse(postData);
+            console.log('GraphQL request vars:', JSON.stringify(lastRequestPayload.variables || {}));
+          }
+        }
+      } catch (e) {}
+    });
+
     page.on('response', async (response) => {
       try {
         if (response.url().includes('/api-gw/graphql')) {
@@ -27,6 +43,7 @@ async function getAllFeatured() {
           if (json.data && json.data.properties) {
             properties = json.data.properties;
             totalCount = json.data.propertiesCount?.count || null;
+            console.log(`GraphQL response: ${properties.length} properties, total: ${totalCount}`);
           }
         }
       } catch (e) {}
@@ -51,56 +68,68 @@ async function getAllFeatured() {
     const allProperties = [...properties];
     console.log(`Page 1: ${allProperties.length} properties (total: ${totalCount})`);
 
-    // Paginate if there are more
-    if (totalCount && allProperties.length < totalCount) {
-      const totalPages = Math.ceil(totalCount / allProperties.length);
+    // Paginate using direct GraphQL calls if there are more
+    if (totalCount && allProperties.length < totalCount && graphqlEndpoint && lastRequestPayload) {
+      const perPage = allProperties.length;
+      const totalPages = Math.ceil(totalCount / perPage);
+      const existingIds = new Set(allProperties.map(p => p.id));
 
-      for (let pageNum = 2; pageNum <= totalPages; pageNum++) {
+      console.log(`Pagination: ${perPage}/page, ${totalPages} pages needed, endpoint: ${graphqlEndpoint}`);
+
+      for (let pageNum = 2; pageNum <= totalPages + 1; pageNum++) {
         if (allProperties.length >= totalCount) break;
 
-        properties = []; // Reset for next page capture
-
-        // Click the pagination link for this page number
-        const clicked = await page.evaluate((num) => {
-          const links = document.querySelectorAll('a');
-          for (const a of links) {
-            const href = a.getAttribute('href') || '';
-            const text = a.textContent.trim();
-            // Match by page number in text or href
-            if ((text === String(num)) || href.includes('=' + num)) {
-              a.click();
-              return true;
-            }
+        // Clone the original payload and update the page/offset variable
+        const payload = JSON.parse(JSON.stringify(lastRequestPayload));
+        if (payload.variables) {
+          // Try common pagination patterns
+          if ('page' in payload.variables) {
+            payload.variables.page = pageNum;
+          } else if ('offset' in payload.variables) {
+            payload.variables.offset = (pageNum - 1) * perPage;
+          } else if ('skip' in payload.variables) {
+            payload.variables.skip = (pageNum - 1) * perPage;
+          } else {
+            // Add page variable as fallback
+            payload.variables.page = pageNum;
           }
-          return false;
-        }, pageNum);
-
-        if (!clicked) {
-          console.log(`Page ${pageNum}: pagination link not found, stopping`);
-          break;
         }
 
-        console.log(`Loading page ${pageNum}...`);
-        // Wait for navigation and GraphQL response
-        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {});
-        await new Promise(r => setTimeout(r, 3000));
+        console.log(`GraphQL page ${pageNum}, vars: ${JSON.stringify(payload.variables)}`);
 
-        // Add new properties (deduplicate by id)
-        const existingIds = new Set(allProperties.map(p => p.id));
+        // Make the GraphQL call directly from the browser context
+        properties = [];
+        await page.evaluate(async (endpoint, body) => {
+          await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        }, graphqlEndpoint, payload);
+
+        await new Promise(r => setTimeout(r, 2000));
+
+        let added = 0;
         for (const p of properties) {
           if (!existingIds.has(p.id)) {
             allProperties.push(p);
             existingIds.add(p.id);
+            added++;
           }
         }
-        console.log(`Page ${pageNum}: +${properties.length} new (total: ${allProperties.length}/${totalCount})`);
+        console.log(`Page ${pageNum}: captured ${properties.length}, added ${added} new (total: ${allProperties.length}/${totalCount})`);
+
+        if (properties.length === 0) {
+          console.log('No more results, stopping pagination');
+          break;
+        }
       }
     }
 
     return {
       properties: allProperties,
       totalCount: totalCount || allProperties.length,
-      pagesScraped: 1 + (totalCount && allProperties.length > properties.length ? Math.ceil((allProperties.length - properties.length) / 12) : 0)
+      pagesScraped: totalCount ? Math.ceil(allProperties.length / Math.max(properties.length, 1)) : 1
     };
   } finally {
     await browser.close();
