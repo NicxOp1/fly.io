@@ -4,8 +4,7 @@ primary_region = "mia"
 [build]
   dockerfile = "Dockerfile"
 
-[env]
-  TOKEN = "aria-secret-token-2024"
+# TOKEN is set via `fly secrets` - do not hardcode here
 
 [http_service]
   internal_port = 3000
