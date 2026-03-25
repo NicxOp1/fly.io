@@ -235,8 +235,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Featured listings
-  if (req.method === 'GET' && req.url.includes('token=')) {
+  // Featured listings (but not /sync)
+  if (req.method === 'GET' && req.url.includes('token=') && !req.url.includes('/sync')) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.searchParams.get('token') !== TOKEN) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
