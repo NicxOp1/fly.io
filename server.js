@@ -82,7 +82,6 @@ async function getAllFeatured() {
         // Clone the original payload and update the page/offset variable
         const payload = JSON.parse(JSON.stringify(lastRequestPayload));
         if (payload.variables) {
-          // Try common pagination patterns
           if ('page' in payload.variables) {
             payload.variables.page = pageNum;
           } else if ('offset' in payload.variables) {
@@ -90,36 +89,37 @@ async function getAllFeatured() {
           } else if ('skip' in payload.variables) {
             payload.variables.skip = (pageNum - 1) * perPage;
           } else {
-            // Add page variable as fallback
             payload.variables.page = pageNum;
           }
         }
 
         console.log(`GraphQL page ${pageNum}, vars: ${JSON.stringify(payload.variables)}`);
 
-        // Make the GraphQL call directly from the browser context
-        properties = [];
-        await page.evaluate(async (endpoint, body) => {
-          await fetch(endpoint, {
+        // Fetch directly and return JSON from browser context
+        const result = await page.evaluate(async (endpoint, body) => {
+          const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify(body)
           });
+          return res.json();
         }, graphqlEndpoint, payload);
 
-        await new Promise(r => setTimeout(r, 2000));
+        const pageProps = result?.data?.properties || [];
+        console.log(`Page ${pageNum}: got ${pageProps.length} properties from GraphQL`);
 
         let added = 0;
-        for (const p of properties) {
+        for (const p of pageProps) {
           if (!existingIds.has(p.id)) {
             allProperties.push(p);
             existingIds.add(p.id);
             added++;
           }
         }
-        console.log(`Page ${pageNum}: captured ${properties.length}, added ${added} new (total: ${allProperties.length}/${totalCount})`);
+        console.log(`Page ${pageNum}: added ${added} new (total: ${allProperties.length}/${totalCount})`);
 
-        if (properties.length === 0) {
+        if (pageProps.length === 0) {
           console.log('No more results, stopping pagination');
           break;
         }
