@@ -5,6 +5,7 @@ const TOKEN = process.env.TOKEN || 'aria-secret-token-2024';
 const RAGIE_API_KEY = process.env.RAGIE_API_KEY || '';
 const PORT = process.env.PORT || 3000;
 const RAGIE_SOURCE = 'aria-listings';
+const RAGIE_PARTITION = 'aria-properties';
 
 async function ragieRequest(method, path, body) {
   const opts = {
@@ -24,20 +25,20 @@ async function deleteAriaDocsFromRagie() {
   let deleted = 0;
   let cursor = null;
 
-  // Paginate through all docs, delete ones with source=aria-listings
+  // Paginate through aria-properties partition only
   while (true) {
-    const url = cursor ? `/documents?cursor=${cursor}&page_size=100` : '/documents?page_size=100';
+    const url = cursor
+      ? `/documents?partition=${RAGIE_PARTITION}&cursor=${cursor}&page_size=100`
+      : `/documents?partition=${RAGIE_PARTITION}&page_size=100`;
     const data = await ragieRequest('GET', url);
     const docs = data.documents || [];
 
     for (const doc of docs) {
-      if (doc.metadata?.source === RAGIE_SOURCE) {
-        await ragieRequest('DELETE', `/documents/${doc.id}`);
-        deleted++;
-        console.log(`Deleted Ragie doc: ${doc.name} (${doc.id})`);
-      }
+      await ragieRequest('DELETE', `/documents/${doc.id}`);
+      deleted++;
     }
 
+    console.log(`Deleted ${deleted} docs so far...`);
     cursor = data.pagination?.next_cursor;
     if (!cursor || docs.length === 0) break;
   }
@@ -87,7 +88,8 @@ async function createAriaDocsInRagie(properties) {
       name: address,
       data: content,
       external_id: `aria-${p.id}`,
-      metadata
+      metadata,
+      partition: RAGIE_PARTITION
     });
 
     created++;
