@@ -7,12 +7,15 @@ const PORT = process.env.PORT || 3000;
 const RAGIE_SOURCE = 'aria-listings';
 const RAGIE_PARTITION = 'aria-properties';
 
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 async function ragieRequest(method, path, body) {
   const opts = {
     method,
     headers: {
       'Authorization': `Bearer ${RAGIE_API_KEY}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'partition': RAGIE_PARTITION
     }
   };
   if (body) opts.body = JSON.stringify(body);
@@ -22,25 +25,38 @@ async function ragieRequest(method, path, body) {
 }
 
 async function deleteAriaDocsFromRagie() {
-  let deleted = 0;
+  // Step 1: GET all doc IDs from aria-properties partition
+  let docIds = [];
   let cursor = null;
 
-  // Paginate through aria-properties partition only
   while (true) {
     const url = cursor
-      ? `/documents?partition=${RAGIE_PARTITION}&cursor=${cursor}&page_size=100`
-      : `/documents?partition=${RAGIE_PARTITION}&page_size=100`;
+      ? `/documents?cursor=${cursor}&page_size=100`
+      : `/documents?page_size=100`;
     const data = await ragieRequest('GET', url);
     const docs = data.documents || [];
+    if (docs.length === 0) break;
 
     for (const doc of docs) {
-      await ragieRequest('DELETE', `/documents/${doc.id}`);
-      deleted++;
+      docIds.push({ id: doc.id, name: doc.name });
     }
 
-    console.log(`Deleted ${deleted} docs so far...`);
+    console.log(`Listed ${docIds.length} docs in ${RAGIE_PARTITION}...`);
     cursor = data.pagination?.next_cursor;
-    if (!cursor || docs.length === 0) break;
+    if (!cursor) break;
+  }
+
+  console.log(`Found ${docIds.length} docs to delete in ${RAGIE_PARTITION}`);
+
+  // Step 2: DELETE with rate limiting (max ~80/min to stay under 100/min limit)
+  let deleted = 0;
+  for (const doc of docIds) {
+    await ragieRequest('DELETE', `/documents/${doc.id}`);
+    deleted++;
+    if (deleted % 50 === 0) {
+      console.log(`Deleted ${deleted}/${docIds.length}...`);
+      await sleep(35000); // pause 35s every 50 deletes to respect rate limit
+    }
   }
 
   return deleted;
@@ -88,12 +104,17 @@ async function createAriaDocsInRagie(properties) {
       name: address,
       data: content,
       external_id: `aria-${p.id}`,
-      metadata,
-      partition: RAGIE_PARTITION
+      metadata
     });
 
     created++;
     console.log(`Created Ragie doc ${created}/${properties.length}: ${address}`);
+
+    // Rate limit: max 25/min for POST /documents/raw (stay under 30/min developer limit)
+    if (created % 25 === 0) {
+      console.log('Rate limit pause (60s)...');
+      await sleep(60000);
+    }
   }
 
   return created;
